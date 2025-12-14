@@ -1,0 +1,23 @@
+# Core ML libraries
+torch==2.9.1
+transformers==4.57.3
+peft==0.18.0
+accelerate==1.12.0
+tokenizers==0.22.1
+huggingface-hub==0.36.0
+
+# Data processing & visualization
+numpy==2.3.5
+matplotlib==3.10.8
+tqdm==4.67.1
+regex==2025.11.3
+nltk==3.9.2
+
+# Web scraping (for data_extraction.ipynb only)
+selenium==4.15.2
+beautifulsoup4==4.12.2
+requests==2.31.0
+webdriver-manager==4.0.1
+
+# Utilities
+python-dotenv==1.2.1

@@ -205,3 +205,13 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+# macOS
+.DS_Store
+
+# Project specific
+data/
+qwen_full_ft/
+qwen_lora/
+tmp_eval/
+tmp_trainer/
+eval_generations.jsonl
