@@ -215,3 +215,6 @@ qwen_lora/
 tmp_eval/
 tmp_trainer/
 eval_generations.jsonl
+# RAG artifacts
+bmw_articles.index
+rag_eval_results.jsonl
