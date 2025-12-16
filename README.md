@@ -13,9 +13,26 @@ End-to-end pipeline for fine-tuning a small language model on BMW press releases
 **Three Approaches Tested**:
 1. **Full Fine-Tuning**: Train all 494M parameters
 2. **LoRA**: Parameter-efficient training (942K params)
-3. **RAG**: Zero-training retrieval-based approach (exploratory comparison)
+3. **RAG**: Zero-training retrieval-based approach (exploratory test)
 
-**Note**: RAG uses different evaluation methodology (standalone questions without pre-provided context) compared to fine-tuned models (context provided in prompt). Direct 1:1 comparison not possible, but provides insights into retrieval-based vs training-based approaches.
+---
+
+## Table of Contents
+
+- [Project Structure](#project-structure)
+- [System Requirements](#system-requirements)
+- [Installation](#installation)
+- [Pipeline Steps](#pipeline-steps)
+  - [1. Data Extraction](#1-data-extraction-data_extractionipynb)
+  - [2. Data Processing](#2-data-processing-data_processing_promptipynb)
+  - [3. Training & Evaluation](#3-training--evaluation-trainingipynb)
+  - [4. RAG Evaluation](#4-rag-evaluation-rag_evaluationipynb)
+- [Results Summary](#results-summary)
+- [How to Run](#how-to-run)
+- [Design Decisions](#design-decisions)
+- [Troubleshooting](#troubleshooting)
+- [Future Improvements](#future-improvements)
+- [Key Takeaways](#key-takeaways)
 
 ---
 
@@ -77,35 +94,19 @@ pip install -r requirements.txt
 
 ### 1. Data Extraction (`data_extraction.ipynb`)
 
-**What it does**:
-- Scrapes ~246 BMW press releases from https://www.press.bmwgroup.com/global/
-- Uses headless Chrome with Selenium for JavaScript-rendered content
-- Splits into 241 train / 5 eval articles (98%/2%)
+- Scrapes ~246 BMW press releases using Selenium (headless Chrome)
+- Splits into 241 train / 5 eval articles  
 - Saves raw JSON to `data/raw/`
-
-**Runtime**: ~15-20 minutes
+- **Runtime**: ~15-20 minutes
 
 ---
 
 ### 2. Data Processing (`data_processing_prompt.ipynb`)
 
-**What it does**:
-- **Training data**: Generates 3 rule-based QA pairs per article
-  1. Title question
-  2. Date question  
-  3. Content summary question
-- **Eval data**: Uses **manually-crafted, diverse questions** (different from training)
-  - More challenging and varied question types
-  - Tests specific comprehension (e.g., "Which team won?", "What design philosophy?")
-  - Ensures model isn't just memorizing training question patterns
+- Generates 3 rule-based QA pairs per article (title, date, summary) for training
+- Creates 15 hand-crafted diverse eval questions testing real comprehension
 - Formats using chat template: `<|system|>`, `<|user|>`, `<|assistant|>`
-- Saves to `data/processed/train.jsonl` (723 pairs) and `eval.jsonl` (15 pairs)
-
-**Example Eval Questions** (hand-crafted for each article):
-- "Which team won the 24 Hours of Nürburgring?"
-- "What design philosophy defines this MINI special edition?"
-- "In which city is the BMW Museum located?"
-- "From which month and year are the specifications valid?"
+- Output: 723 train pairs, 15 eval pairs in JSONL format
 
 **Prompt Format**:
 ```
@@ -126,97 +127,29 @@ Question: {question}
 
 ### 3. Training & Evaluation (`training.ipynb`)
 
-**Base Model**: `Qwen/Qwen2.5-0.5B` (494M parameters)
-- Small enough for CPU training
-- Modern architecture with strong instruction-following
-- Context length: 2048 tokens
+**Base Model**: `Qwen/Qwen2.5-0.5B` (494M parameters, 2048 token context)
 
-#### Training Approaches
+**Two Approaches**:
+- **Full Fine-Tuning**: LR 2e-5, trains all 494M params (~20 min)
+- **LoRA**: LR 1e-4, trains 942K params/0.19% (~15 min), rank=8, alpha=16
 
-**Full Fine-Tuning**:
-- Learning rate: 2e-5
-- Updates all 494M parameters
-- Training time: ~20 minutes
+**Data Filtering**: Removed 123/723 samples exceeding 2048 tokens → 600 train, 12 eval
 
-**LoRA (Parameter-Efficient)**:
-- Learning rate: 1e-4 (higher LR for PEFT is standard)
-- Rank: 8, Alpha: 16
-- Only trains 942K parameters (0.19%)
-- Training time: ~15 minutes
+**Metrics**: Perplexity, Exact Match Accuracy, Qualitative analysis
 
-#### Data Filtering
-
-**Key Decision**: Filter samples exceeding 2048 tokens instead of truncating.
-- Removed 123/723 samples (17%)
-- Preserves answer quality over quantity
-- Final dataset: 600 train, 12 eval samples
-
-**Rationale**: Truncating contexts risks losing question-relevant information. With limited data, quality matters more than quantity.
-
-#### Evaluation Metrics
-
-- **Perplexity**: Quantitative measure on held-out eval set
-- **Exact Match Accuracy**: Strict string matching on 12 eval samples
-- **Qualitative**: Side-by-side generation comparison in `eval_generations.jsonl`
-
-**Runtime**: ~40-50 minutes (Full FT + LoRA)
+**Runtime**: ~40-50 minutes total
 
 ---
 
 ### 4. RAG Evaluation (`rag_evaluation.ipynb`)
 
-**What it does**:
-- Implements pure Retrieval-Augmented Generation (RAG) as exploratory comparison
-- Uses same base model (`Qwen/Qwen2.5-0.5B`) without fine-tuning
-- Tests whether retrieval can compensate for lack of fine-tuning
+Exploratory test using base `Qwen/Qwen2.5-0.5B` (no fine-tuning) with retrieval.
 
-**⚠️ Not Directly Comparable**: RAG uses **different evaluation methodology** than fine-tuned models:
-- **Fine-tuned models**: Context provided in prompt (trained format), evaluated on 12 questions (3 filtered for token length)
-- **RAG**: Standalone questions without pre-provided context (must retrieve), evaluated on 15 questions (no filtering)
-- **Different questions**: RAG questions rewritten to be standalone vs original context-dependent questions
-- Results show different capabilities under different conditions, not head-to-head performance
+**Setup**: SentenceTransformer embeddings + FAISS index over 246 articles → Retrieve top-3 → Generate answer
 
-**RAG Architecture**:
-- **Embedding Model**: `sentence-transformers/all-MiniLM-L6-v2` (384 dimensions)
-- **Vector Store**: FAISS with L2 distance indexing
-- **Knowledge Base**: All 246 BMW press releases (train + eval articles)
-- **Retrieval**: Top-3 most relevant articles per question
-- **Generation**: Base Qwen2.5-0.5B (no fine-tuning)
+**Questions**: 15 standalone questions (rewritten from eval set to not assume context)
 
-**Pipeline**:
-1. Question → Embed with SentenceTransformer
-2. Search FAISS index → Retrieve top-3 articles
-3. Construct prompt: `Context: [articles] Question: [question] Answer:`
-4. Generate answer with base model
-
-**Question Adaptation**:
-- Fine-tuned models receive context from user (training format)
-- RAG models must find context themselves
-- **Challenge**: Original eval questions assumed context ("this press release")
-- **Solution**: Rewrote all 15 questions to be standalone and highly specific
-  - Before: "What kind of information does this press release provide?"
-  - After: "What type of document contains BMW 5 Series Sedan specifications valid from 03/2025?"
-
-**Example RAG Questions**:
-```
-- Which racing team won the 24 Hours of Nürburgring with car number 98 
-  BMW M4 GT3 EVO driven by Kelvin van der Linde, Augusto Farfus, 
-  Jesse Krohn, and Raffaele Marciello?
-  
-- Which British designer with the motto 'Every day is a new beginning' 
-  collaborated with MINI on a special edition with Nottingham Green accents?
-  
-- In which city is the BMW Museum located that received over 840,000 
-  visitors in the past year?
-```
-
-**Key Design Choices**:
-- **No chat format tags**: Simplified prompt without `<|system|>` / `<|user|>` markers
-- **Article truncation**: First 500 characters per article to fit context window
-- **Generation settings**: `temperature=0.7`, `top_p=0.9` for more natural outputs
-- **Retrieval-first**: Model never sees questions during training, relies entirely on retrieval
-
-**Runtime**: ~10-15 minutes (embedding + evaluation)
+**Runtime**: ~10-15 minutes
 
 ---
 
@@ -243,50 +176,28 @@ Question: {question}
 | **Setup Time** | ~10 min | Embedding generation + vector index |
 | **Use Case** | Zero-shot retrieval | Useful when training is not feasible |
 
-**⚠️ Important Caveat**: RAG and fine-tuned models use **different methodologies** and are **not directly comparable**:
-- **Fine-tuned models**: Questions + context provided in prompt (12 eval questions, trained format)
-- **RAG**: Standalone questions without pre-provided context (15 eval questions, must retrieve context)
-- **Different questions**: RAG uses rewritten standalone versions of the original context-dependent questions
-- RAG serves as an exploratory test of retrieval-based approaches, not a fair head-to-head comparison
+**⚠️ Not Directly Comparable**: Different methodologies - Fine-tuned models use 12 context-provided questions; RAG uses 15 rewritten standalone questions with retrieval. Exploratory comparison only.
 
-### Model-Specific Performance Analysis
+### Performance Notes
 
-**Fine-Tuned Models (Full FT & LoRA)**:
-- Direct answers extracted from provided context
-- Strong when context contains exact answer
-- Fail when context is wrong or missing relevant info
-- **Example Success**: "ROWE Racing won the race." ✓
+**Fine-Tuned Models**: Extract direct answers from provided context. Strong when context contains answer.
 
-**RAG (Retrieval-Based)**:
-- Retrieval quality varies by question specificity
-- Often retrieves correct articles but generates verbose/incorrect answers
-- Base model (no fine-tuning) struggles with instruction-following
-- **Example Issues**: 
-  - Correct article retrieved, but answer is hallucinated
-  - Model generates questions instead of answers
-  - Verbose explanations instead of concise answers
+**RAG**: Often retrieves correct articles but base model struggles with instruction-following, producing verbose or incorrect answers.
 
 ### Key Insights
 
-**LoRA Advantages**:
+**LoRA vs Full FT**:
 - Better generalization on small dataset (regularization effect)
 - 25% faster training with 40% less memory
 - 500x smaller deployment size
 - Comparable quality with far fewer parameters
-
-**RAG as Exploratory Comparison** (Not 1:1 Comparable):
-- **Different Evaluation**: RAG uses standalone questions (15 total); fine-tuned models use context-provided prompts (12 total)
-- **RAG Advantages**: Zero training cost, no model updates, instant deployment
-- **Fine-Tuning Advantages**: Better answer quality, more reliable outputs, trained for specific format
-- **Key Finding**: Retrieval often finds relevant articles, but base 0.5B model struggles with instruction-following and generation
-- **Limitations**: Different question formats, different eval set sizes, no exact match calculation for RAG
-- **Takeaway**: RAG demonstrates alternative approach; results suggest hybrid RAG + fine-tuning could combine strengths
+- Winner for this use case (small dataset, CPU, limited compute)
 
 **Why Low Accuracy Overall?**
 - Only 600 training samples (very limited)
 - 50 training steps (8% of one epoch)
 - Small 0.5B model
-- Assignment emphasizes **understanding over accuracy**
+- Focus on demonstrating pipeline, not achieving SOTA
 
 ---
 
@@ -350,21 +261,18 @@ jupyter notebook rag_evaluation.ipynb
 - Trade-off: Training questions less diverse, but eval properly tests generalization
 
 ### 3. Filtering vs Truncation
-- **Decision**: Filter long samples instead of truncating
-- **Rationale**: Preserves data quality, avoids corrupted training signals
-- **Impact**: 600 high-quality samples > 723 mixed-quality samples
-- **Alignment**: Assignment emphasizes sound engineering judgment, not max accuracy
+- Filter long samples (>2048 tokens) instead of truncating
+- Preserves data quality, avoids corrupted training signals
+- 600 high-quality samples > 723 mixed-quality samples
 
-### 4. Manual Eval Questions (Not Rule-Based)
-- **Training**: Simple rule-based questions (title, date, summary)
-- **Eval**: Hand-crafted, diverse questions for each article
-- Tests whether model truly understands content vs memorizing patterns
-- More realistic assessment of Q&A capabilities
+### 4. Manual Eval Questions
+- Training: Simple rule-based questions (title, date, summary)
+- Eval: Hand-crafted, diverse questions testing real comprehension
+- Tests understanding vs pattern memorization
 
 ### 5. Full FT vs LoRA Comparison
-- Demonstrates modern PEFT approach vs traditional fine-tuning
-- Shows clear trade-offs in resource usage and performance
-- LoRA wins for this use case (small dataset, CPU, limited compute)
+- Demonstrates modern PEFT vs traditional fine-tuning
+- LoRA wins: small dataset, CPU training, limited compute
 
 ### 6. Different Learning Rates (2e-5 vs 1e-4)
 - Industry best practice: PEFT methods use 5-10x higher LR
@@ -405,9 +313,7 @@ jupyter notebook rag_evaluation.ipynb
 ## Key Takeaways
 
 1. **Data Quality > Quantity**: 600 clean samples outperform 723 mixed-quality samples
-2. **LoRA is Production-Ready**: Fast, efficient, and comparable to Full FT on small datasets
-3. **Small Models Can Learn**: Even 0.5B parameters show clear domain adaptation
-4. **RAG as Exploration** (Not Direct Comparison): Different methodologies (15 standalone questions vs 12 context-provided questions) mean RAG results are exploratory observations, not head-to-head comparable
-5. **RAG Observations**: Retrieval often finds relevant articles, but small base models (0.5B) lack instruction-following for reliable generation - outputs are frequently verbose or off-target
-6. **Hybrid Approach Worth Exploring**: Results suggest fine-tuning on RAG-style prompts could combine retrieval benefits with trained generation capability
-7. **Informed Decisions Matter**: Assignment values engineering judgment over peak accuracy
+2. **LoRA Wins**: Fast, efficient, comparable to Full FT on small datasets
+3. **Small Models Work**: Even 0.5B parameters show clear domain adaptation  
+4. **RAG Insights**: Retrieval works but small base models lack instruction-following; hybrid approach worth exploring
+5. **Engineering > Accuracy**: Focus on sound decisions and clear communication
